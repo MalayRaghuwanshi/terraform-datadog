@@ -1,0 +1,22 @@
+# Terraform local cache and state — NEVER commit these
+# .terraform/ contains downloaded provider binaries (large, platform-specific)
+# State files contain real secrets and infrastructure IDs — committing them
+# would be a security risk and could expose API keys, resource ARNs, etc.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+
+# Sensitive variable files
+# .tfvars files often contain real credentials, API keys, and account IDs
+# These should NEVER be in version control — share them via secrets manager
+*.tfvars
+*.tfvars.json
+
+# OS files
+.DS_Store
+Thumbs.db

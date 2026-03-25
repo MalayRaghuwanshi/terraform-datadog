@@ -1,0 +1,209 @@
+# =============================================================================
+# TERRAFORM CI/CD PIPELINE — GITHUB ACTIONS
+# =============================================================================
+#
+# WHAT THIS FILE DOES:
+# This is a GitHub Actions workflow — it tells GitHub to automatically run
+# Terraform commands when things happen in the repo.
+#
+# ON PULL REQUEST:
+#   Runs terraform plan and posts the output as a PR comment.
+#   Reviewers see EXACTLY what will change in Datadog before they approve.
+#   Nothing changes in Datadog at this point — plan is read-only.
+#
+# ON MERGE TO MAIN:
+#   Runs terraform apply. The approved changes are now made live in Datadog.
+#   This only runs AFTER a PR has been approved and merged.
+#
+# WHY THIS MATTERS:
+#   Every change to Datadog monitoring goes through this pipeline.
+#   No one needs to run Terraform locally to deploy changes.
+#   The PR comment shows the plan so reviewers can make informed decisions.
+#   The audit trail in GitHub shows every change ever made.
+#
+# =============================================================================
+
+name: "Terraform Datadog"
+
+# =============================================================================
+# TRIGGERS — when does this workflow run?
+# =============================================================================
+on:
+  # Run on every Pull Request that touches the datadog/ folder
+  pull_request:
+    branches: [main]
+    paths:
+      - "datadog/**"
+
+  # Run on push (merge) to main that touches the datadog/ folder
+  push:
+    branches: [main]
+    paths:
+      - "datadog/**"
+
+# =============================================================================
+# JOB 1: TERRAFORM PLAN (runs on Pull Requests)
+# =============================================================================
+# This job runs terraform plan and posts the output as a PR comment.
+# It does NOT make any changes — plan is read-only and safe.
+# =============================================================================
+jobs:
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      # Step 1: Check out the code
+      # Checks out the code from the PR branch so we can run Terraform on it
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Terraform
+      # Installs the correct version of Terraform — must match
+      # required_version in main.tf (">= 0.8, < 1")
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "0.15.5"
+
+      # Step 3: Authenticate to AWS
+      # Authenticates to AWS so Terraform can read secrets from Secrets Manager.
+      # AWS_ROLE_ARN and AWS_REGION must be set in:
+      #   GitHub → Settings → Secrets and variables → Actions
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Step 4: Set Datadog credentials
+      # The Datadog provider reads these environment variables automatically.
+      # Set these in GitHub → Settings → Secrets → Actions:
+      #   DD_API_KEY = your Datadog API key
+      #   DD_APP_KEY = your Datadog Application key
+      - name: Set Datadog environment variables
+        run: |
+          echo "DD_API_KEY=${{ secrets.DD_API_KEY }}" >> $GITHUB_ENV
+          echo "DD_APP_KEY=${{ secrets.DD_APP_KEY }}" >> $GITHUB_ENV
+
+      # Step 5: Terraform Init
+      # Downloads the Datadog and AWS providers.
+      # Must run before plan or apply — Terraform needs the provider
+      # plugins to know how to talk to Datadog and AWS.
+      - name: Terraform Init
+        working-directory: datadog/ins
+        run: terraform init
+
+      # Step 6: Terraform Format Check
+      # Fails if any .tf files are not properly formatted.
+      # Enforces consistent code style across the team.
+      # Run `terraform fmt` locally to auto-fix formatting before pushing.
+      - name: Terraform Format Check
+        working-directory: datadog/ins
+        run: terraform fmt -check
+
+      # Step 7: Terraform Validate
+      # Checks for syntax errors in .tf files without contacting any APIs.
+      # Catches typos and structural errors early — before the plan runs.
+      - name: Terraform Validate
+        working-directory: datadog/ins
+        run: terraform validate
+
+      # Step 8: Terraform Plan
+      # Runs the plan. Shows what Terraform WOULD do without doing it.
+      # -no-color = clean output for the PR comment (no ANSI escape codes)
+      # -out=tfplan = saves the plan to a file so apply uses EXACTLY this plan
+      # continue-on-error = still post the PR comment even if the plan fails
+      - name: Terraform Plan
+        id: plan
+        working-directory: datadog/ins
+        run: terraform plan -no-color -out=tfplan
+        continue-on-error: true
+
+      # Step 9: Post plan as PR comment
+      # This is what reviewers read. They see:
+      #   + = resources to CREATE
+      #   ~ = resources to UPDATE
+      #   - = resources to DESTROY
+      # Reviewers check this before deciding whether to approve.
+      - name: Post Plan to PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const output = `#### Terraform Plan 📋
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            *Plan result: \`${{ steps.plan.outcome }}\`*
+            *Pushed by: @${{ github.actor }}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # =============================================================================
+  # JOB 2: TERRAFORM APPLY (runs on merge to main)
+  # =============================================================================
+  # This job applies the changes — makes them live in Datadog.
+  # Only runs after code has been merged to main (i.e., after PR approval).
+  # =============================================================================
+  terraform-apply:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "0.15.5"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set Datadog environment variables
+        run: |
+          echo "DD_API_KEY=${{ secrets.DD_API_KEY }}" >> $GITHUB_ENV
+          echo "DD_APP_KEY=${{ secrets.DD_APP_KEY }}" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        working-directory: datadog/ins
+        run: terraform init
+
+      # Terraform Apply
+      # Applies the changes. -auto-approve skips the interactive confirmation
+      # because we've already had human approval via the PR process.
+      # At this point, the changes go LIVE in Datadog.
+      - name: Terraform Apply
+        working-directory: datadog/ins
+        run: terraform apply -auto-approve
+
+# =============================================================================
+# REQUIRED GITHUB SECRETS
+# =============================================================================
+# Configure these in GitHub → Settings → Secrets and variables → Actions:
+#
+#   DD_API_KEY   — Datadog API key
+#                  (Datadog → Settings → Access → API Keys)
+#
+#   DD_APP_KEY   — Datadog Application key
+#                  (Datadog → Settings → Access → Application Keys)
+#
+#   AWS_ROLE_ARN — IAM role ARN that Terraform assumes to read Secrets Manager
+#                  (AWS IAM console → Roles)
+#
+#   AWS_REGION   — ap-southeast-2
+#                  (or whichever region your secrets are stored in)
+# =============================================================================

@@ -1,0 +1,423 @@
+# =============================================================================
+# INSURANCE (INS) CHANNEL — DATADOG MONITORING CONFIGURATION
+# =============================================================================
+#
+# This single file manages ALL monitoring for the insurance channel.
+# It contains both:
+#   - SYNTHETICS (uptime checks) — migrated from Splunk APM Synthetics
+#   - MONITORS (metric alerts)   — migrated from Splunk APM Detectors
+#
+# HOW IT WORKS:
+#   Each block has a UNIQUE KEY (e.g., ins_portal_health_check). Terraform
+#   uses this key to track the resource. If you change the key, Terraform
+#   thinks the old resource was deleted and a new one was created — it will
+#   destroy the old monitor and create a new one. BE CAREFUL with keys.
+#
+# TEMPLATE SYNTAX — TWO DIFFERENT SYSTEMS:
+#   ${placeholder}   = Terraform injects the real value at plan/apply time.
+#                      The secret is read from AWS Secrets Manager and
+#                      substituted before this file reaches Datadog.
+#                      NEVER appears in the final output.
+#
+#   {{#is_alert}}    = Datadog template syntax. These ARE in the final output
+#                      and Datadog interprets them when the monitor triggers.
+#                      {{value}} = actual metric value at alert time
+#                      {{threshold}} = configured threshold value
+#
+# HOW TO ADD A NEW TEST:
+#   1. Copy an existing block below
+#   2. Give it a NEW UNIQUE KEY
+#   3. Update the values (name, URL, thresholds, etc.)
+#   4. If you need a secret: add ${my_secret} here AND add a
+#      data "aws_secretsmanager_secret_version" block to main.tf
+#   5. Create a PR — CI will show you the Terraform plan
+#
+# =============================================================================
+
+
+# =============================================================================
+# SECTION A: SYNTHETIC TESTS
+# =============================================================================
+# These were Splunk APM Synthetics. In Datadog they are datadog_synthetics_test
+# resources. They ping an endpoint on a schedule and alert if it stops
+# responding or is too slow.
+#
+# Each synthetic test:
+#   - Makes an HTTP request to a URL on a schedule
+#   - Checks the response (status code, response time)
+#   - Alerts the team if the check fails
+# =============================================================================
+
+synthetics:
+
+  # ---------------------------------------------------------------------------
+  # SYNTHETIC 1: INS Portal Health Check
+  # ---------------------------------------------------------------------------
+  # Simple GET health check. No secret needed — the URL is not sensitive.
+  # This checks that the insurance portal is up and responding from Sydney.
+  # ---------------------------------------------------------------------------
+  ins_portal_health_check:
+
+    # Display name shown in Datadog Synthetics UI
+    name: "INS Portal — Health Check"
+
+    # The URL to check — this is a public health endpoint, no auth needed
+    url: "https://insurance.example.com/health"
+
+    # HTTP method — GET is standard for health checks
+    method: GET
+
+    # How long to wait for a response before considering it failed (seconds)
+    timeout: 30
+
+    # How often to run this check, in seconds
+    # 300 = every 5 minutes = 288 checks per day
+    frequency: 300
+
+    # How long the check must be failing before an alert fires (seconds)
+    # 0 = alert immediately on first failure
+    min_failure_duration: 0
+
+    # How many locations must fail before alerting
+    # 1 = alert if even one location reports failure
+    min_location_failed: 1
+
+    options:
+      # Same as frequency — how often the check runs (seconds)
+      tick_every: 300
+
+      # "round-robin" = rotate through locations each run
+      # "all" = run from all locations simultaneously
+      scheduling_strategy: "round-robin"
+
+      # Whether to ignore SSL certificate errors
+      # false = FAIL if the SSL cert is invalid (this is what we want)
+      ignore_server_certificate_error: false
+
+    # Monitor priority: 1=P1 critical, 2=P2 high, 3=P3 medium, 4=P4 low, 5=P5 info
+    # P3 = medium priority — health check failures are investigated during business hours
+    monitor_priority: 3
+
+    # Which AWS regions to run the check from
+    # "aws:ap-southeast-2" = Sydney, Australia
+    locations:
+      - "aws:ap-southeast-2"
+
+    # Expected HTTP status code — anything else is a failure
+    expected_status_code: 200
+
+    # Assertions — conditions that must ALL be true for the check to pass
+    assertions:
+      # The HTTP status code must be exactly 200
+      - type: statusCode
+        operator: is
+        target: 200
+      # The response must come back in under 3000ms (3 seconds)
+      - type: responseTime
+        operator: lessThan
+        target: 3000
+
+    # Alert message — uses Datadog template syntax (NOT Terraform syntax)
+    # {{#is_alert}} = shown when the check is failing
+    # {{#is_recovery}} = shown when the check starts passing again
+    # @slack-ins-monitoring = sends the alert to the #ins-monitoring Slack channel
+    message: |
+      {{#is_alert}}
+      INS Portal health check failing from Sydney.
+      {{/is_alert}}
+      {{#is_recovery}}
+      INS Portal health check recovered.
+      {{/is_recovery}}
+      @slack-ins-monitoring
+
+
+  # ---------------------------------------------------------------------------
+  # SYNTHETIC 2: APM Splunk Service Connectivity Check
+  # ---------------------------------------------------------------------------
+  # Uses a secret URL from AWS Secrets Manager. This is a direct migration of
+  # a Splunk APM synthetic — the endpoint URL contains credentials so it
+  # cannot be hardcoded in this file.
+  # ---------------------------------------------------------------------------
+  #
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │ WHY ${splunk_api_url} AND NOT A HARDCODED URL:                         │
+  # │                                                                         │
+  # │ The Splunk API URL contains authentication credentials. If we          │
+  # │ hardcoded it here, those credentials would be visible in the Git       │
+  # │ repository to anyone with repo access.                                  │
+  # │                                                                         │
+  # │ Instead:                                                                │
+  # │   The real URL lives in AWS Secrets Manager at /ins/splunk_api_url     │
+  # │   Terraform reads it at plan time and substitutes it into this         │
+  # │   template. This file is safe to commit because the secret is never    │
+  # │   stored here.                                                          │
+  # │                                                                         │
+  # │ The rendered output (with the real URL) is only ever in memory during  │
+  # │ the terraform plan/apply run — it is never written to disk or          │
+  # │ committed to Git.                                                       │
+  # └─────────────────────────────────────────────────────────────────────────┘
+  #
+  apm_splunk_service_check:
+
+    name: "APM Splunk — Service Connectivity Check"
+
+    # ${splunk_api_url} is replaced by Terraform at plan time with the real
+    # URL from AWS Secrets Manager. Datadog never sees this placeholder.
+    url: "${splunk_api_url}"
+
+    method: GET
+    timeout: 30
+
+    # Every 10 minutes — less frequent because this is a connectivity check,
+    # not a user-facing health check
+    frequency: 600
+
+    min_failure_duration: 0
+    min_location_failed: 1
+
+    options:
+      tick_every: 600
+      scheduling_strategy: "round-robin"
+      ignore_server_certificate_error: false
+
+    # P2 = high priority — Splunk APM connectivity affects observability
+    # for the entire insurance channel
+    monitor_priority: 2
+
+    locations:
+      - "aws:ap-southeast-2"
+
+    expected_status_code: 200
+
+    assertions:
+      - type: statusCode
+        operator: is
+        target: 200
+      # Tighter response time than the portal check — APM service should
+      # respond quickly; slow responses may indicate API issues
+      - type: responseTime
+        operator: lessThan
+        target: 2000
+
+    # @pagerduty-INS_P2 = routes to PagerDuty with P2 severity
+    # This will page the on-call engineer during business hours
+    message: |
+      {{#is_alert}}
+      APM Splunk Alert — Service connectivity check has failed from Sydney.
+      Check: {{url}}
+      {{/is_alert}}
+      {{#is_recovery}}
+      APM Splunk check has recovered.
+      {{/is_recovery}}
+      @pagerduty-INS_P2
+
+
+# =============================================================================
+# SECTION B: MONITORS (METRIC ALERTS)
+# =============================================================================
+# These were Splunk APM Detectors. In Datadog they are datadog_monitor
+# resources. They evaluate a metric or APM trace query on a schedule and
+# alert when a threshold is crossed.
+#
+# Splunk called these "detectors" — Datadog calls them "monitors".
+# The concept is the same: watch a metric, alert when it's bad.
+# =============================================================================
+
+monitors:
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 1: INS APM Error Rate
+  # ---------------------------------------------------------------------------
+  # MIGRATED FROM SPLUNK APM DETECTOR:
+  #   Splunk: "Alert when error rate signal exceeds 5% for 5 minutes"
+  #   Datadog equivalent: metric alert using trace.servlet.request.errors
+  #
+  # The query calculates error rate as: errors / total_requests * 100
+  # {{value}} and {{threshold}} are Datadog template variables — they are
+  # substituted with the actual metric value and threshold at alert time
+  # so the notification shows the real numbers.
+  # ---------------------------------------------------------------------------
+  ins_splunk_apm_error_rate_monitor:
+
+    name: "INS — APM Splunk Service Error Rate High"
+
+    # "metric alert" = Datadog evaluates a metric query and alerts on threshold
+    type: "metric alert"
+
+    # The query:
+    #   avg(last_5m):  Average over the last 5 minutes
+    #   sum:trace.servlet.request.errors{...}.as_rate()  Error request rate
+    #   /  sum:trace.servlet.request.hits{...}.as_rate()  Total request rate
+    #   * 100  Convert to percentage
+    #   > 5  Alert when above 5%
+    query: "avg(last_5m):sum:trace.servlet.request.errors{service:ins-splunk,env:production}.as_rate() / sum:trace.servlet.request.hits{service:ins-splunk,env:production}.as_rate() * 100 > 5"
+
+    monitor_thresholds:
+      # Alert fires when error rate exceeds 5%
+      critical: 5
+      # Alert recovers when error rate drops below 2%
+      # The gap between critical (5) and recovery (2) prevents flapping —
+      # the monitor won't rapidly alternate between alert and OK
+      critical_recovery: 2
+      # Warning at 3% — gives the team a heads-up before it becomes critical
+      warning: 3
+
+    # false = evaluate even if the window is not fully populated with data
+    # This ensures we catch issues even during low-traffic periods
+    require_full_window: false
+
+    # true = alert if Datadog stops receiving data for this metric
+    # A silent metric could mean the service is completely down
+    notify_no_data: true
+
+    # How many minutes of no data before alerting (minutes)
+    no_data_timeframe: 10
+
+    # Re-notify every 30 minutes if the alert is still active
+    # Prevents the alert from being forgotten during an ongoing incident
+    renotify_interval: 30
+
+    # P2 = high priority
+    priority: 2
+
+    # Alert message using Datadog template variables
+    # {{value}} = the actual error rate percentage at alert time
+    # {{threshold}} = the configured threshold (5%)
+    message: |
+      {{#is_alert}}
+      INS APM Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
+      Service: ins-splunk | Environment: production
+      {{/is_alert}}
+      {{#is_warning}}
+      INS APM Error Rate Warning — Error rate is {{value}}%
+      {{/is_warning}}
+      {{#is_recovery}}
+      INS APM error rate has recovered. Current rate: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-INS_P2 @slack-ins-alerts
+
+    # Tags for filtering and grouping in Datadog UI
+    # "migrated-from:splunk" helps track which monitors came from the migration
+    tags:
+      - "env:production"
+      - "team:insurance"
+      - "service:ins-splunk"
+      - "migrated-from:splunk"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 2: INS APM Latency P99
+  # ---------------------------------------------------------------------------
+  # MIGRATED FROM SPLUNK APM DETECTOR:
+  #   Splunk: "Alert when P99 latency exceeds 2 seconds"
+  #   Datadog: trace.servlet.request using p99 aggregation
+  #
+  # The warning threshold (1500ms) creates an early notification before the
+  # critical threshold (2000ms) is breached — giving the team time to
+  # investigate before it becomes a P1 incident.
+  # ---------------------------------------------------------------------------
+  ins_splunk_apm_latency_monitor:
+
+    name: "INS — APM Splunk Service Latency P99 High"
+
+    type: "metric alert"
+
+    # The query:
+    #   avg(last_5m):  Average over the last 5 minutes
+    #   p99:trace.servlet.request{...}  99th percentile response time
+    #   > 2000  Alert when P99 exceeds 2000ms (2 seconds)
+    query: "avg(last_5m):p99:trace.servlet.request{service:ins-splunk,env:production} > 2000"
+
+    monitor_thresholds:
+      # Alert when P99 latency exceeds 2000ms (2 seconds)
+      critical: 2000
+      # Recover when it drops below 1500ms
+      critical_recovery: 1500
+      # Warn at 1500ms — early heads-up
+      warning: 1500
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 30
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      INS APM Latency Alert — P99 latency is {{value}}ms (threshold: {{threshold}}ms)
+      Service: ins-splunk | Environment: production
+      Investigate: Check for slow database queries or downstream service issues
+      {{/is_alert}}
+      {{#is_warning}}
+      INS APM Latency Warning — P99 latency is {{value}}ms
+      {{/is_warning}}
+      {{#is_recovery}}
+      INS APM latency has recovered. Current P99: {{value}}ms
+      {{/is_recovery}}
+      @pagerduty-INS_P2
+
+    tags:
+      - "env:production"
+      - "team:insurance"
+      - "service:ins-splunk"
+      - "migrated-from:splunk"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 3: INS Payments API Availability
+  # ---------------------------------------------------------------------------
+  # MIGRATED FROM SPLUNK APM DETECTOR:
+  #   This was a Splunk "service down" detector. In Datadog we use a service
+  #   check monitor.
+  #
+  #   Priority 1 (P1) means CRITICAL — this wakes people up at 3am.
+  #   The runbook link in the message means whoever gets paged has immediate
+  #   access to the remediation steps.
+  #
+  #   Payments being down is a revenue-impacting incident — that is why this
+  #   is the highest priority monitor in the insurance channel.
+  # ---------------------------------------------------------------------------
+  ins_payments_api_availability_monitor:
+
+    name: "INS — Payments API Availability"
+
+    # "service check" = monitors whether a service is reporting as healthy
+    # Different from "metric alert" — this watches the service status itself,
+    # not a metric about the service
+    type: "service check"
+
+    check: "datadog.agent.check_status"
+
+    check_tags:
+      - "service:ins-payments"
+      - "env:production"
+
+    monitor_thresholds:
+      # 1 = alert after 1 consecutive failure
+      # For P1 monitors, we want to know immediately
+      critical: 1
+
+    # Alert if no data received for 5 minutes
+    # For a service check, no data likely means the service is completely down
+    notify_no_data: true
+    no_data_timeframe: 5
+
+    # P1 = CRITICAL — pages on-call immediately, regardless of time of day
+    priority: 1
+
+    message: |
+      {{#is_alert}}
+      P1 — INS Payments API is DOWN
+      The payments service has stopped responding. Immediate action required.
+      Runbook: https://wiki.example.com/runbooks/payments-down
+      {{/is_alert}}
+      {{#is_recovery}}
+      INS Payments API has recovered and is responding normally.
+      {{/is_recovery}}
+      @pagerduty-INS_P1 @slack-ins-oncall
+
+    tags:
+      - "env:production"
+      - "team:insurance"
+      - "service:ins-payments"
+      - "migrated-from:splunk"

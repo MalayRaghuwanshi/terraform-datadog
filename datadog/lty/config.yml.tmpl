@@ -1,0 +1,115 @@
+# =============================================================================
+# LOYALTY (LTY) CHANNEL — DATADOG MONITORING CONFIGURATION
+# =============================================================================
+# Same structure as ins/config.yml.tmpl — synthetics first, then monitors.
+# See the ins config for detailed field-by-field explanations.
+# =============================================================================
+
+
+# =============================================================================
+# SECTION A: SYNTHETIC TESTS
+# =============================================================================
+
+synthetics:
+
+  # ---------------------------------------------------------------------------
+  # SYNTHETIC 1: LTY Rewards API Health Check
+  # ---------------------------------------------------------------------------
+  # Standard health check — no secrets needed, public endpoint.
+  # Verifies the loyalty rewards API is up and responding from Sydney.
+  # ---------------------------------------------------------------------------
+  lty_rewards_api_health:
+
+    name: "LTY Rewards API — Health Check"
+    url: "https://loyalty.example.com/rewards/health"
+    method: GET
+    timeout: 30
+    frequency: 300
+    min_failure_duration: 0
+    min_location_failed: 1
+
+    options:
+      tick_every: 300
+      scheduling_strategy: "round-robin"
+      ignore_server_certificate_error: false
+
+    monitor_priority: 3
+
+    locations:
+      - "aws:ap-southeast-2"
+
+    expected_status_code: 200
+
+    assertions:
+      - type: statusCode
+        operator: is
+        target: 200
+      - type: responseTime
+        operator: lessThan
+        target: 3000
+
+    message: |
+      {{#is_alert}}
+      LTY Rewards API health check failing from Sydney.
+      {{/is_alert}}
+      {{#is_recovery}}
+      LTY Rewards API health check recovered.
+      {{/is_recovery}}
+      @slack-lty-monitoring
+
+
+# =============================================================================
+# SECTION B: MONITORS
+# =============================================================================
+
+monitors:
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 1: LTY Points Processing Error Rate
+  # ---------------------------------------------------------------------------
+  # MIGRATED FROM SPLUNK APM DETECTOR:
+  #   Splunk: "LTY Points Processing Errors"
+  #   Alert when error rate on the points processing service exceeds 3%
+  #   over the last 5 minutes.
+  #
+  # Lower threshold than ins (3% vs 5%) because points processing errors
+  # directly impact customer loyalty balances — even a small error rate
+  # can affect many customers.
+  # ---------------------------------------------------------------------------
+  lty_points_processing_error_rate:
+
+    name: "LTY — Points Processing Error Rate"
+    type: "metric alert"
+
+    query: "avg(last_5m):sum:trace.servlet.request.errors{service:lty-points,env:production}.as_rate() / sum:trace.servlet.request.hits{service:lty-points,env:production}.as_rate() * 100 > 3"
+
+    monitor_thresholds:
+      critical: 3
+      critical_recovery: 1
+      warning: 2
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 30
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      LTY Points Processing Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
+      Service: lty-points | Environment: production
+      Impact: Customer loyalty point balances may be affected.
+      {{/is_alert}}
+      {{#is_warning}}
+      LTY Points Processing Error Rate Warning — Error rate is {{value}}%
+      {{/is_warning}}
+      {{#is_recovery}}
+      LTY Points processing error rate has recovered. Current rate: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-LTY_P2
+
+    tags:
+      - "env:production"
+      - "team:loyalty"
+      - "service:lty-points"
+      - "migrated-from:splunk"
