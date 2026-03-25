@@ -421,3 +421,197 @@ monitors:
       - "team:alpha"
       - "service:alpha-checkout"
       - "migrated-from:legacy-apm"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 4: Alpha Database Connection Pool Exhaustion
+  # ---------------------------------------------------------------------------
+  # Alerts when the database connection pool is running low.
+  # If the pool is exhausted, new requests queue up and latency spikes.
+  # Catching this at 85% gives the team time to scale or investigate
+  # connection leaks before users are affected.
+  # ---------------------------------------------------------------------------
+  alpha_db_connection_pool_monitor:
+
+    name: "Alpha — Database Connection Pool Usage High"
+    type: "metric alert"
+
+    # postgresql.connections.used / postgresql.connections.max * 100
+    # Monitors the percentage of database connections in use
+    query: "avg(last_5m):avg:postgresql.percent_usage_connections{service:alpha-orders,env:production} > 85"
+
+    monitor_thresholds:
+      critical: 85
+      critical_recovery: 60
+      warning: 70
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 15
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      Alpha DB Connection Pool Alert — Usage at {{value}}% (threshold: {{threshold}}%)
+      Service: alpha-orders | Environment: production
+      Action: Check for connection leaks or scale the pool size.
+      Runbook: https://wiki.acme-demo.com/runbooks/db-pool-exhaustion
+      {{/is_alert}}
+      {{#is_warning}}
+      Alpha DB Connection Pool Warning — Usage at {{value}}%
+      {{/is_warning}}
+      {{#is_recovery}}
+      Alpha DB connection pool usage has recovered. Current: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-ALPHA_P2 @slack-alpha-alerts
+
+    tags:
+      - "env:production"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "component:database"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 5: Alpha Memory Usage (OOM Prevention)
+  # ---------------------------------------------------------------------------
+  # Alerts when a host's memory usage is dangerously high.
+  # At 90%, the OS may start killing processes (OOM killer) which can
+  # take down the service without warning.
+  # ---------------------------------------------------------------------------
+  alpha_memory_usage_monitor:
+
+    name: "Alpha — Host Memory Usage Critical"
+    type: "metric alert"
+
+    query: "avg(last_10m):avg:system.mem.pct_usable{service:alpha-orders,env:production} < 0.10"
+
+    monitor_thresholds:
+      # Alert when LESS than 10% memory is available (i.e., 90%+ used)
+      critical: 0.10
+      critical_recovery: 0.20
+      warning: 0.15
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 15
+    priority: 1
+
+    message: |
+      {{#is_alert}}
+      P1 — Alpha Host Memory Critical — Only {{value}}% memory available
+      Service: alpha-orders | Environment: production
+      Risk: OOM killer may terminate processes. Immediate action required.
+      Runbook: https://wiki.acme-demo.com/runbooks/high-memory
+      {{/is_alert}}
+      {{#is_warning}}
+      Alpha Host Memory Warning — Only {{value}}% memory available
+      {{/is_warning}}
+      {{#is_recovery}}
+      Alpha host memory has recovered. Available: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-ALPHA_P1 @slack-alpha-oncall
+
+    tags:
+      - "env:production"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "component:infrastructure"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 6: Alpha Log Error Spike
+  # ---------------------------------------------------------------------------
+  # Watches application logs for a sudden spike in ERROR-level entries.
+  # A "log alert" type — different from metric alerts. This counts log
+  # lines matching a pattern rather than watching a numeric metric.
+  # Useful for catching issues that don't show up in APM traces
+  # (background jobs, cron tasks, async processing).
+  # ---------------------------------------------------------------------------
+  alpha_log_error_spike_monitor:
+
+    name: "Alpha — Application Log Error Spike"
+    type: "log alert"
+
+    # Count ERROR-level logs in the last 5 minutes for alpha-orders service
+    query: "logs(\"status:error service:alpha-orders env:production\").index(\"*\").rollup(\"count\").last(\"5m\") > 50"
+
+    monitor_thresholds:
+      critical: 50
+      critical_recovery: 10
+      warning: 25
+
+    require_full_window: false
+    notify_no_data: false
+    renotify_interval: 30
+    priority: 3
+
+    message: |
+      {{#is_alert}}
+      Alpha Log Error Spike — {{value}} errors in the last 5 minutes (threshold: {{threshold}})
+      Service: alpha-orders | Environment: production
+      Check logs: https://app.datadoghq.com/logs?query=status%3Aerror%20service%3Aalpha-orders
+      {{/is_alert}}
+      {{#is_warning}}
+      Alpha Log Error Warning — {{value}} errors in the last 5 minutes
+      {{/is_warning}}
+      {{#is_recovery}}
+      Alpha log error rate has returned to normal. Current count: {{value}}
+      {{/is_recovery}}
+      @slack-alpha-alerts
+
+    tags:
+      - "env:production"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "type:log-alert"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 7: Alpha Disk Usage
+  # ---------------------------------------------------------------------------
+  # Alerts when disk space is running low. Full disks can cause:
+  # - Database crashes (can't write WAL/transaction logs)
+  # - Application failures (can't write temp files or logs)
+  # - Complete service outage
+  # A forecast-style threshold gives the team time to clean up or expand.
+  # ---------------------------------------------------------------------------
+  alpha_disk_usage_monitor:
+
+    name: "Alpha — Disk Usage High"
+    type: "metric alert"
+
+    query: "avg(last_15m):avg:system.disk.in_use{service:alpha-orders,env:production} > 0.85"
+
+    monitor_thresholds:
+      critical: 0.85
+      critical_recovery: 0.70
+      warning: 0.75
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 30
+    renotify_interval: 60
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      Alpha Disk Usage Alert — Disk is {{value}}% full (threshold: {{threshold}}%)
+      Service: alpha-orders | Environment: production
+      Action: Clean up old logs, temp files, or expand volume.
+      {{/is_alert}}
+      {{#is_warning}}
+      Alpha Disk Usage Warning — Disk is {{value}}% full
+      {{/is_warning}}
+      {{#is_recovery}}
+      Alpha disk usage has recovered. Current: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-ALPHA_P2 @slack-alpha-alerts
+
+    tags:
+      - "env:production"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "component:infrastructure"

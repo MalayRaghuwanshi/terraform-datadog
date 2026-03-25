@@ -113,3 +113,197 @@ monitors:
       - "team:beta"
       - "service:beta-inventory"
       - "migrated-from:legacy-apm"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 2: Beta Inventory API Latency P95
+  # ---------------------------------------------------------------------------
+  # Watches the 95th percentile response time for the inventory API.
+  # P95 means "95% of requests are faster than this value" — if P95 is
+  # 1500ms, then 5% of users are waiting longer than 1.5 seconds.
+  # ---------------------------------------------------------------------------
+  beta_inventory_api_latency_monitor:
+
+    name: "Beta — Inventory API Latency P95 High"
+    type: "metric alert"
+
+    query: "avg(last_5m):p95:trace.servlet.request{service:beta-inventory,env:production} > 1500"
+
+    monitor_thresholds:
+      critical: 1500
+      critical_recovery: 1000
+      warning: 1000
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 30
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      Beta Inventory API Latency Alert — P95 latency is {{value}}ms (threshold: {{threshold}}ms)
+      Service: beta-inventory | Environment: production
+      Investigate: Check for slow database queries or cache misses.
+      {{/is_alert}}
+      {{#is_warning}}
+      Beta Inventory API Latency Warning — P95 latency is {{value}}ms
+      {{/is_warning}}
+      {{#is_recovery}}
+      Beta Inventory API latency has recovered. Current P95: {{value}}ms
+      {{/is_recovery}}
+      @pagerduty-BETA_P2
+
+    tags:
+      - "env:production"
+      - "team:beta"
+      - "service:beta-inventory"
+      - "migrated-from:legacy-apm"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 3: Beta Queue Depth — Message Backlog
+  # ---------------------------------------------------------------------------
+  # Watches the message queue depth for the inventory processing pipeline.
+  # When messages pile up faster than consumers can process them, it means:
+  # - Consumers may be down or slow
+  # - A traffic spike has overwhelmed processing capacity
+  # - Downstream dependency is blocking consumers
+  # ---------------------------------------------------------------------------
+  beta_queue_depth_monitor:
+
+    name: "Beta — Inventory Queue Backlog Growing"
+    type: "metric alert"
+
+    # aws.sqs.approximate_number_of_messages_visible = messages waiting to be processed
+    query: "avg(last_10m):avg:aws.sqs.approximate_number_of_messages_visible{queuename:beta-inventory-queue,env:production} > 5000"
+
+    monitor_thresholds:
+      critical: 5000
+      critical_recovery: 1000
+      warning: 2000
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 15
+    renotify_interval: 30
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      Beta Queue Backlog Alert — {{value}} messages waiting (threshold: {{threshold}})
+      Queue: beta-inventory-queue | Environment: production
+      Action: Check consumer health, scale consumers, or investigate downstream issues.
+      {{/is_alert}}
+      {{#is_warning}}
+      Beta Queue Backlog Warning — {{value}} messages waiting
+      {{/is_warning}}
+      {{#is_recovery}}
+      Beta queue backlog has cleared. Current depth: {{value}}
+      {{/is_recovery}}
+      @pagerduty-BETA_P2 @slack-beta-alerts
+
+    tags:
+      - "env:production"
+      - "team:beta"
+      - "service:beta-inventory"
+      - "component:queue"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 4: Beta Cache Hit Rate Drop
+  # ---------------------------------------------------------------------------
+  # Monitors the Redis/cache hit rate. A sudden drop in hit rate means
+  # more requests are hitting the database directly, which can cause:
+  # - Increased latency (DB is slower than cache)
+  # - Database overload (too many direct queries)
+  # - Cascading failures if DB can't handle the load
+  #
+  # Common causes: cache eviction, cache node failure, deployment that
+  # changed cache keys, or TTL expiry after a restart.
+  # ---------------------------------------------------------------------------
+  beta_cache_hit_rate_monitor:
+
+    name: "Beta — Cache Hit Rate Drop"
+    type: "metric alert"
+
+    query: "avg(last_10m):avg:redis.stats.keyspace_hits{service:beta-inventory,env:production} / (avg:redis.stats.keyspace_hits{service:beta-inventory,env:production} + avg:redis.stats.keyspace_misses{service:beta-inventory,env:production}) * 100 < 70"
+
+    monitor_thresholds:
+      # Alert when hit rate drops BELOW 70%
+      critical: 70
+      critical_recovery: 85
+      warning: 80
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 15
+    renotify_interval: 30
+    priority: 3
+
+    message: |
+      {{#is_alert}}
+      Beta Cache Hit Rate Alert — Hit rate dropped to {{value}}% (threshold: {{threshold}}%)
+      Service: beta-inventory | Environment: production
+      Impact: Database load will increase. Check cache node health and key patterns.
+      {{/is_alert}}
+      {{#is_warning}}
+      Beta Cache Hit Rate Warning — Hit rate is {{value}}%
+      {{/is_warning}}
+      {{#is_recovery}}
+      Beta cache hit rate has recovered. Current rate: {{value}}%
+      {{/is_recovery}}
+      @slack-beta-alerts
+
+    tags:
+      - "env:production"
+      - "team:beta"
+      - "service:beta-inventory"
+      - "component:cache"
+
+
+  # ---------------------------------------------------------------------------
+  # MONITOR 5: Beta HTTP 5xx Rate
+  # ---------------------------------------------------------------------------
+  # Watches the rate of HTTP 500-level responses returned to users.
+  # 5xx errors mean the SERVER failed — not the user's fault.
+  # This catches issues that the error rate monitor might miss if
+  # the service is partially working (some endpoints fail, others don't).
+  # ---------------------------------------------------------------------------
+  beta_http_5xx_rate_monitor:
+
+    name: "Beta — HTTP 5xx Error Rate"
+    type: "metric alert"
+
+    query: "avg(last_5m):sum:trace.servlet.request.hits{service:beta-inventory,env:production,http.status_class:5xx}.as_rate() / sum:trace.servlet.request.hits{service:beta-inventory,env:production}.as_rate() * 100 > 2"
+
+    monitor_thresholds:
+      critical: 2
+      critical_recovery: 0.5
+      warning: 1
+
+    require_full_window: false
+    notify_no_data: true
+    no_data_timeframe: 10
+    renotify_interval: 15
+    priority: 2
+
+    message: |
+      {{#is_alert}}
+      Beta HTTP 5xx Rate Alert — {{value}}% of responses are server errors (threshold: {{threshold}}%)
+      Service: beta-inventory | Environment: production
+      Action: Check application logs for stack traces and recent deployments.
+      {{/is_alert}}
+      {{#is_warning}}
+      Beta HTTP 5xx Rate Warning — {{value}}% of responses are server errors
+      {{/is_warning}}
+      {{#is_recovery}}
+      Beta HTTP 5xx rate has recovered. Current rate: {{value}}%
+      {{/is_recovery}}
+      @pagerduty-BETA_P2 @slack-beta-oncall
+
+    tags:
+      - "env:production"
+      - "team:beta"
+      - "service:beta-inventory"
+      - "type:http-errors"
