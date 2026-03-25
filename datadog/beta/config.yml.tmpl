@@ -1,8 +1,8 @@
 # =============================================================================
-# LOYALTY (LTY) CHANNEL — DATADOG MONITORING CONFIGURATION
+# BETA CHANNEL — DATADOG MONITORING CONFIGURATION
 # =============================================================================
-# Same structure as ins/config.yml.tmpl — synthetics first, then monitors.
-# See the ins config for detailed field-by-field explanations.
+# Same structure as alpha/config.yml.tmpl — synthetics first, then monitors.
+# See the alpha config for detailed field-by-field explanations.
 # =============================================================================
 
 
@@ -13,15 +13,15 @@
 synthetics:
 
   # ---------------------------------------------------------------------------
-  # SYNTHETIC 1: LTY Rewards API Health Check
+  # SYNTHETIC 1: Beta Inventory API Health Check
   # ---------------------------------------------------------------------------
   # Standard health check — no secrets needed, public endpoint.
-  # Verifies the loyalty rewards API is up and responding from Sydney.
+  # Verifies the inventory API is up and responding from us-east-1.
   # ---------------------------------------------------------------------------
-  lty_rewards_api_health:
+  beta_inventory_api_health:
 
-    name: "LTY Rewards API — Health Check"
-    url: "https://loyalty.example.com/rewards/health"
+    name: "Beta Inventory API — Health Check"
+    url: "https://api.acme-demo.com/inventory/health"
     method: GET
     timeout: 30
     frequency: 300
@@ -36,7 +36,7 @@ synthetics:
     monitor_priority: 3
 
     locations:
-      - "aws:ap-southeast-2"
+      - "aws:us-east-1"
 
     expected_status_code: 200
 
@@ -50,12 +50,12 @@ synthetics:
 
     message: |
       {{#is_alert}}
-      LTY Rewards API health check failing from Sydney.
+      Beta Inventory API health check failing from us-east-1.
       {{/is_alert}}
       {{#is_recovery}}
-      LTY Rewards API health check recovered.
+      Beta Inventory API health check recovered.
       {{/is_recovery}}
-      @slack-lty-monitoring
+      @slack-beta-monitoring
 
 
 # =============================================================================
@@ -65,23 +65,23 @@ synthetics:
 monitors:
 
   # ---------------------------------------------------------------------------
-  # MONITOR 1: LTY Points Processing Error Rate
+  # MONITOR 1: Beta Inventory Processing Error Rate
   # ---------------------------------------------------------------------------
-  # MIGRATED FROM SPLUNK APM DETECTOR:
-  #   Splunk: "LTY Points Processing Errors"
-  #   Alert when error rate on the points processing service exceeds 3%
+  # MIGRATED FROM LEGACY APM DETECTOR:
+  #   Legacy: "Beta Inventory Processing Errors"
+  #   Alert when error rate on the inventory processing service exceeds 3%
   #   over the last 5 minutes.
   #
-  # Lower threshold than ins (3% vs 5%) because points processing errors
-  # directly impact customer loyalty balances — even a small error rate
+  # Lower threshold than alpha (3% vs 5%) because inventory processing errors
+  # directly impact stock accuracy — even a small error rate
   # can affect many customers.
   # ---------------------------------------------------------------------------
-  lty_points_processing_error_rate:
+  beta_inventory_processing_error_rate:
 
-    name: "LTY — Points Processing Error Rate"
+    name: "Beta — Inventory Processing Error Rate"
     type: "metric alert"
 
-    query: "avg(last_5m):sum:trace.servlet.request.errors{service:lty-points,env:production}.as_rate() / sum:trace.servlet.request.hits{service:lty-points,env:production}.as_rate() * 100 > 3"
+    query: "avg(last_5m):sum:trace.servlet.request.errors{service:beta-inventory,env:production}.as_rate() / sum:trace.servlet.request.hits{service:beta-inventory,env:production}.as_rate() * 100 > 3"
 
     monitor_thresholds:
       critical: 3
@@ -96,20 +96,20 @@ monitors:
 
     message: |
       {{#is_alert}}
-      LTY Points Processing Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
-      Service: lty-points | Environment: production
-      Impact: Customer loyalty point balances may be affected.
+      Beta Inventory Processing Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
+      Service: beta-inventory | Environment: production
+      Impact: Stock levels and availability data may be affected.
       {{/is_alert}}
       {{#is_warning}}
-      LTY Points Processing Error Rate Warning — Error rate is {{value}}%
+      Beta Inventory Processing Error Rate Warning — Error rate is {{value}}%
       {{/is_warning}}
       {{#is_recovery}}
-      LTY Points processing error rate has recovered. Current rate: {{value}}%
+      Beta Inventory processing error rate has recovered. Current rate: {{value}}%
       {{/is_recovery}}
-      @pagerduty-LTY_P2
+      @pagerduty-BETA_P2
 
     tags:
       - "env:production"
-      - "team:loyalty"
-      - "service:lty-points"
-      - "migrated-from:splunk"
+      - "team:beta"
+      - "service:beta-inventory"
+      - "migrated-from:legacy-apm"

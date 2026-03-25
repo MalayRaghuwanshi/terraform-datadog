@@ -92,7 +92,7 @@ jobs:
       # Must run before plan or apply — Terraform needs the provider
       # plugins to know how to talk to Datadog and AWS.
       - name: Terraform Init
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform init
 
       # Step 6: Terraform Format Check
@@ -100,14 +100,14 @@ jobs:
       # Enforces consistent code style across the team.
       # Run `terraform fmt` locally to auto-fix formatting before pushing.
       - name: Terraform Format Check
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform fmt -check
 
       # Step 7: Terraform Validate
       # Checks for syntax errors in .tf files without contacting any APIs.
       # Catches typos and structural errors early — before the plan runs.
       - name: Terraform Validate
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform validate
 
       # Step 8: Terraform Plan
@@ -117,7 +117,7 @@ jobs:
       # continue-on-error = still post the PR comment even if the plan fails
       - name: Terraform Plan
         id: plan
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform plan -no-color -out=tfplan
         continue-on-error: true
 
@@ -179,7 +179,7 @@ jobs:
           echo "DD_APP_KEY=${{ secrets.DD_APP_KEY }}" >> $GITHUB_ENV
 
       - name: Terraform Init
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform init
 
       # Terraform Apply
@@ -187,7 +187,7 @@ jobs:
       # because we've already had human approval via the PR process.
       # At this point, the changes go LIVE in Datadog.
       - name: Terraform Apply
-        working-directory: datadog/ins
+        working-directory: datadog/alpha
         run: terraform apply -auto-approve
 
 # =============================================================================
@@ -204,6 +204,6 @@ jobs:
 #   AWS_ROLE_ARN — IAM role ARN that Terraform assumes to read Secrets Manager
 #                  (AWS IAM console → Roles)
 #
-#   AWS_REGION   — ap-southeast-2
+#   AWS_REGION   — us-east-1
 #                  (or whichever region your secrets are stored in)
 # =============================================================================

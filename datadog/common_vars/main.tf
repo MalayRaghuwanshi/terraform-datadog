@@ -1,7 +1,7 @@
 # =============================================================================
 # COMMON VARIABLES MODULE
 # =============================================================================
-# This is a shared module — every channel (ins, lty, etc.) calls this module
+# This is a shared module — every channel (alpha, beta, etc.) calls this module
 # to get common values rather than hardcoding them in every channel's files.
 #
 # WHY: If the AWS account ID changes or we move to a different Datadog site,
@@ -12,13 +12,13 @@
 
 locals {
   # AWS region for all resources
-  region = "ap-southeast-2"
+  region = "us-east-1"
 
   # AWS account IDs
   # prd  = Production account — where live monitoring resources are deployed
   # nprd = Non-production account — for staging/testing Terraform changes
-  aws_prd  = "111111111111"
-  aws_nprd = "222222222222"
+  aws_prd  = "123456789012"
+  aws_nprd = "987654321098"
 
   # Datadog site — determines which Datadog data center we connect to
   # datadoghq.com = US1 (default)

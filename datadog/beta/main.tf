@@ -1,9 +1,9 @@
 # =============================================================================
-# LOYALTY (LTY) CHANNEL — TERRAFORM CONFIGURATION
+# BETA CHANNEL — TERRAFORM CONFIGURATION
 # =============================================================================
-# Same pattern as ins/main.tf. Key differences:
-#   - S3 backend key: "datadog/lty/terraform.tfstate" (unique per channel)
-#   - Secret paths: /lty/ instead of /ins/
+# Same pattern as alpha/main.tf. Key differences:
+#   - S3 backend key: "datadog/beta/terraform.tfstate" (unique per channel)
+#   - Secret paths: /beta/ instead of /alpha/
 #
 # This separation means changes to one channel CANNOT accidentally affect
 # another channel's Terraform state. Each channel has its own state file,
@@ -28,11 +28,11 @@ terraform {
     }
   }
 
-  # UNIQUE backend key for loyalty channel — different from ins
+  # UNIQUE backend key for beta channel — different from alpha
   backend "s3" {
-    bucket = "loyalty-terraform-state"
-    key    = "datadog/lty/terraform.tfstate"
-    region = "ap-southeast-2"
+    bucket = "acme-terraform-state"
+    key    = "datadog/beta/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
@@ -58,21 +58,21 @@ provider "aws" {
 
 
 # =============================================================================
-# BLOCK 4: AWS SECRETS MANAGER — LTY-SPECIFIC SECRETS
+# BLOCK 4: AWS SECRETS MANAGER — BETA-SPECIFIC SECRETS
 # =============================================================================
-# Note: /lty/ prefix — these are loyalty channel secrets, separate from /ins/
+# Note: /beta/ prefix — these are beta channel secrets, separate from /alpha/
 # =============================================================================
 
-data "aws_secretsmanager_secret_version" "splunk_api_url" {
-  secret_id = "/lty/splunk_api_url"
+data "aws_secretsmanager_secret_version" "external_api_url" {
+  secret_id = "/beta/external_api_url"
 }
 
-data "aws_secretsmanager_secret_version" "rewards_api_token" {
-  secret_id = "/lty/rewards_api_bearer_token"
+data "aws_secretsmanager_secret_version" "inventory_api_token" {
+  secret_id = "/beta/inventory_api_bearer_token"
 }
 
-data "aws_secretsmanager_secret_version" "splunk_apm_service_key" {
-  secret_id = "/lty/splunk_apm_service_key"
+data "aws_secretsmanager_secret_version" "legacy_apm_service_key" {
+  secret_id = "/beta/legacy_apm_service_key"
 }
 
 
@@ -83,9 +83,9 @@ data "template_file" "this" {
   template = file("config.yml.tmpl")
 
   vars = {
-    splunk_api_url       = data.aws_secretsmanager_secret_version.splunk_api_url.secret_string
-    rewards_api_token    = data.aws_secretsmanager_secret_version.rewards_api_token.secret_string
-    splunk_apm_service_key = data.aws_secretsmanager_secret_version.splunk_apm_service_key.secret_string
+    external_api_url       = data.aws_secretsmanager_secret_version.external_api_url.secret_string
+    inventory_api_token    = data.aws_secretsmanager_secret_version.inventory_api_token.secret_string
+    legacy_apm_service_key = data.aws_secretsmanager_secret_version.legacy_apm_service_key.secret_string
   }
 }
 

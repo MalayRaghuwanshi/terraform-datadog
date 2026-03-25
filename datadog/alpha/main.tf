@@ -1,5 +1,5 @@
 # =============================================================================
-# INSURANCE (INS) CHANNEL — TERRAFORM CONFIGURATION
+# ALPHA CHANNEL — TERRAFORM CONFIGURATION
 # =============================================================================
 # This file wires together:
 #   1. Terraform settings and providers
@@ -17,10 +17,10 @@
 # to download, and WHERE to store the state file.
 #
 # BACKEND KEY UNIQUENESS:
-# The backend key "datadog/ins/terraform.tfstate" MUST be unique per channel.
+# The backend key "datadog/alpha/terraform.tfstate" MUST be unique per channel.
 # If two channels used the same key, they would overwrite each other's state
-# and DESTROY each other's resources. The ins channel uses datadog/ins/...,
-# the lty channel uses datadog/lty/..., etc.
+# and DESTROY each other's resources. The alpha channel uses datadog/alpha/...,
+# the beta channel uses datadog/beta/..., etc.
 # =============================================================================
 terraform {
   required_version = ">= 0.8, < 1"
@@ -45,9 +45,9 @@ terraform {
   #   - Multiple team members can collaborate
   #   - State is backed up and versioned by S3
   backend "s3" {
-    bucket = "loyalty-terraform-state"
-    key    = "datadog/ins/terraform.tfstate"
-    region = "ap-southeast-2"
+    bucket = "acme-terraform-state"
+    key    = "datadog/alpha/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
@@ -94,19 +94,19 @@ provider "aws" {
 #   - Access to secrets is controlled by IAM policies
 # =============================================================================
 
-# The Splunk API URL — contains authentication credentials in the URL itself
-data "aws_secretsmanager_secret_version" "splunk_api_url" {
-  secret_id = "/ins/splunk_api_url"
+# The external API URL — contains authentication credentials in the URL itself
+data "aws_secretsmanager_secret_version" "external_api_url" {
+  secret_id = "/alpha/external_api_url"
 }
 
-# Bearer token for the Payments API — used in synthetic checks
-data "aws_secretsmanager_secret_version" "payments_api_token" {
-  secret_id = "/ins/payments_api_bearer_token"
+# Bearer token for the Checkout API — used in synthetic checks
+data "aws_secretsmanager_secret_version" "checkout_api_token" {
+  secret_id = "/alpha/checkout_api_bearer_token"
 }
 
-# Splunk APM service key — used to authenticate with Splunk's APM service
-data "aws_secretsmanager_secret_version" "splunk_apm_service_key" {
-  secret_id = "/ins/splunk_apm_service_key"
+# Legacy APM service key — used to authenticate with the legacy APM service
+data "aws_secretsmanager_secret_version" "legacy_apm_service_key" {
+  secret_id = "/alpha/legacy_apm_service_key"
 }
 
 
@@ -120,7 +120,7 @@ data "aws_secretsmanager_secret_version" "splunk_apm_service_key" {
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ IMPORTANT: TWO DIFFERENT TEMPLATE SYNTAXES IN THE SAME FILE            │
 # │                                                                         │
-# │ ${splunk_api_url}    = TERRAFORM syntax, replaced at plan/apply time   │
+# │ ${external_api_url}  = TERRAFORM syntax, replaced at plan/apply time   │
 # │                        Terraform reads the secret from AWS and          │
 # │                        substitutes the real value into the template.    │
 # │                        ${} NEVER appears in the final rendered output.  │
@@ -139,9 +139,9 @@ data "template_file" "this" {
   template = file("config.yml.tmpl")
 
   vars = {
-    splunk_api_url       = data.aws_secretsmanager_secret_version.splunk_api_url.secret_string
-    payments_api_token   = data.aws_secretsmanager_secret_version.payments_api_token.secret_string
-    splunk_apm_service_key = data.aws_secretsmanager_secret_version.splunk_apm_service_key.secret_string
+    external_api_url       = data.aws_secretsmanager_secret_version.external_api_url.secret_string
+    checkout_api_token     = data.aws_secretsmanager_secret_version.checkout_api_token.secret_string
+    legacy_apm_service_key = data.aws_secretsmanager_secret_version.legacy_apm_service_key.secret_string
   }
 }
 

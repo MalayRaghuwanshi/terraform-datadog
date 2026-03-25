@@ -1,14 +1,14 @@
 # =============================================================================
-# INSURANCE (INS) CHANNEL — DATADOG MONITORING CONFIGURATION
+# ALPHA CHANNEL — DATADOG MONITORING CONFIGURATION
 # =============================================================================
 #
-# This single file manages ALL monitoring for the insurance channel.
+# This single file manages ALL monitoring for the alpha channel.
 # It contains both:
-#   - SYNTHETICS (uptime checks) — migrated from Splunk APM Synthetics
-#   - MONITORS (metric alerts)   — migrated from Splunk APM Detectors
+#   - SYNTHETICS (uptime checks) — migrated from Legacy APM Synthetics
+#   - MONITORS (metric alerts)   — migrated from Legacy APM Detectors
 #
 # HOW IT WORKS:
-#   Each block has a UNIQUE KEY (e.g., ins_portal_health_check). Terraform
+#   Each block has a UNIQUE KEY (e.g., alpha_order_svc_health_check). Terraform
 #   uses this key to track the resource. If you change the key, Terraform
 #   thinks the old resource was deleted and a new one was created — it will
 #   destroy the old monitor and create a new one. BE CAREFUL with keys.
@@ -38,7 +38,7 @@
 # =============================================================================
 # SECTION A: SYNTHETIC TESTS
 # =============================================================================
-# These were Splunk APM Synthetics. In Datadog they are datadog_synthetics_test
+# These were Legacy APM Synthetics. In Datadog they are datadog_synthetics_test
 # resources. They ping an endpoint on a schedule and alert if it stops
 # responding or is too slow.
 #
@@ -51,18 +51,18 @@
 synthetics:
 
   # ---------------------------------------------------------------------------
-  # SYNTHETIC 1: INS Portal Health Check
+  # SYNTHETIC 1: Alpha Order Service Health Check
   # ---------------------------------------------------------------------------
   # Simple GET health check. No secret needed — the URL is not sensitive.
-  # This checks that the insurance portal is up and responding from Sydney.
+  # This checks that the order service is up and responding from us-east-1.
   # ---------------------------------------------------------------------------
-  ins_portal_health_check:
+  alpha_order_svc_health_check:
 
     # Display name shown in Datadog Synthetics UI
-    name: "INS Portal — Health Check"
+    name: "Alpha Order Service — Health Check"
 
     # The URL to check — this is a public health endpoint, no auth needed
-    url: "https://insurance.example.com/health"
+    url: "https://api.acme-demo.com/orders/health"
 
     # HTTP method — GET is standard for health checks
     method: GET
@@ -99,9 +99,9 @@ synthetics:
     monitor_priority: 3
 
     # Which AWS regions to run the check from
-    # "aws:ap-southeast-2" = Sydney, Australia
+    # "aws:us-east-1" = N. Virginia, USA
     locations:
-      - "aws:ap-southeast-2"
+      - "aws:us-east-1"
 
     # Expected HTTP status code — anything else is a failure
     expected_status_code: 200
@@ -120,34 +120,34 @@ synthetics:
     # Alert message — uses Datadog template syntax (NOT Terraform syntax)
     # {{#is_alert}} = shown when the check is failing
     # {{#is_recovery}} = shown when the check starts passing again
-    # @slack-ins-monitoring = sends the alert to the #ins-monitoring Slack channel
+    # @slack-alpha-monitoring = sends the alert to the #alpha-monitoring Slack channel
     message: |
       {{#is_alert}}
-      INS Portal health check failing from Sydney.
+      Alpha Order Service health check failing from us-east-1.
       {{/is_alert}}
       {{#is_recovery}}
-      INS Portal health check recovered.
+      Alpha Order Service health check recovered.
       {{/is_recovery}}
-      @slack-ins-monitoring
+      @slack-alpha-monitoring
 
 
   # ---------------------------------------------------------------------------
-  # SYNTHETIC 2: APM Splunk Service Connectivity Check
+  # SYNTHETIC 2: External API Connectivity Check
   # ---------------------------------------------------------------------------
   # Uses a secret URL from AWS Secrets Manager. This is a direct migration of
-  # a Splunk APM synthetic — the endpoint URL contains credentials so it
+  # a Legacy APM synthetic — the endpoint URL contains credentials so it
   # cannot be hardcoded in this file.
   # ---------------------------------------------------------------------------
   #
   # ┌─────────────────────────────────────────────────────────────────────────┐
-  # │ WHY ${splunk_api_url} AND NOT A HARDCODED URL:                         │
+  # │ WHY ${external_api_url} AND NOT A HARDCODED URL:                       │
   # │                                                                         │
-  # │ The Splunk API URL contains authentication credentials. If we          │
+  # │ The external API URL contains authentication credentials. If we        │
   # │ hardcoded it here, those credentials would be visible in the Git       │
   # │ repository to anyone with repo access.                                  │
   # │                                                                         │
   # │ Instead:                                                                │
-  # │   The real URL lives in AWS Secrets Manager at /ins/splunk_api_url     │
+  # │   The real URL lives in AWS Secrets Manager at /alpha/external_api_url │
   # │   Terraform reads it at plan time and substitutes it into this         │
   # │   template. This file is safe to commit because the secret is never    │
   # │   stored here.                                                          │
@@ -157,13 +157,13 @@ synthetics:
   # │ committed to Git.                                                       │
   # └─────────────────────────────────────────────────────────────────────────┘
   #
-  apm_splunk_service_check:
+  alpha_external_api_check:
 
-    name: "APM Splunk — Service Connectivity Check"
+    name: "Alpha — External API Connectivity Check"
 
-    # ${splunk_api_url} is replaced by Terraform at plan time with the real
+    # ${external_api_url} is replaced by Terraform at plan time with the real
     # URL from AWS Secrets Manager. Datadog never sees this placeholder.
-    url: "${splunk_api_url}"
+    url: "${external_api_url}"
 
     method: GET
     timeout: 30
@@ -180,12 +180,12 @@ synthetics:
       scheduling_strategy: "round-robin"
       ignore_server_certificate_error: false
 
-    # P2 = high priority — Splunk APM connectivity affects observability
-    # for the entire insurance channel
+    # P2 = high priority — external API connectivity affects observability
+    # for the entire alpha channel
     monitor_priority: 2
 
     locations:
-      - "aws:ap-southeast-2"
+      - "aws:us-east-1"
 
     expected_status_code: 200
 
@@ -193,43 +193,43 @@ synthetics:
       - type: statusCode
         operator: is
         target: 200
-      # Tighter response time than the portal check — APM service should
+      # Tighter response time than the order service check — external API should
       # respond quickly; slow responses may indicate API issues
       - type: responseTime
         operator: lessThan
         target: 2000
 
-    # @pagerduty-INS_P2 = routes to PagerDuty with P2 severity
+    # @pagerduty-ALPHA_P2 = routes to PagerDuty with P2 severity
     # This will page the on-call engineer during business hours
     message: |
       {{#is_alert}}
-      APM Splunk Alert — Service connectivity check has failed from Sydney.
+      Alpha External API Alert — Connectivity check has failed from us-east-1.
       Check: {{url}}
       {{/is_alert}}
       {{#is_recovery}}
-      APM Splunk check has recovered.
+      Alpha External API check has recovered.
       {{/is_recovery}}
-      @pagerduty-INS_P2
+      @pagerduty-ALPHA_P2
 
 
 # =============================================================================
 # SECTION B: MONITORS (METRIC ALERTS)
 # =============================================================================
-# These were Splunk APM Detectors. In Datadog they are datadog_monitor
+# These were Legacy APM Detectors. In Datadog they are datadog_monitor
 # resources. They evaluate a metric or APM trace query on a schedule and
 # alert when a threshold is crossed.
 #
-# Splunk called these "detectors" — Datadog calls them "monitors".
+# The legacy system called these "detectors" — Datadog calls them "monitors".
 # The concept is the same: watch a metric, alert when it's bad.
 # =============================================================================
 
 monitors:
 
   # ---------------------------------------------------------------------------
-  # MONITOR 1: INS APM Error Rate
+  # MONITOR 1: Alpha Order Service Error Rate
   # ---------------------------------------------------------------------------
-  # MIGRATED FROM SPLUNK APM DETECTOR:
-  #   Splunk: "Alert when error rate signal exceeds 5% for 5 minutes"
+  # MIGRATED FROM LEGACY APM DETECTOR:
+  #   Legacy: "Alert when error rate signal exceeds 5% for 5 minutes"
   #   Datadog equivalent: metric alert using trace.servlet.request.errors
   #
   # The query calculates error rate as: errors / total_requests * 100
@@ -237,9 +237,9 @@ monitors:
   # substituted with the actual metric value and threshold at alert time
   # so the notification shows the real numbers.
   # ---------------------------------------------------------------------------
-  ins_splunk_apm_error_rate_monitor:
+  alpha_order_svc_error_rate_monitor:
 
-    name: "INS — APM Splunk Service Error Rate High"
+    name: "Alpha — Order Service Error Rate High"
 
     # "metric alert" = Datadog evaluates a metric query and alerts on threshold
     type: "metric alert"
@@ -250,7 +250,7 @@ monitors:
     #   /  sum:trace.servlet.request.hits{...}.as_rate()  Total request rate
     #   * 100  Convert to percentage
     #   > 5  Alert when above 5%
-    query: "avg(last_5m):sum:trace.servlet.request.errors{service:ins-splunk,env:production}.as_rate() / sum:trace.servlet.request.hits{service:ins-splunk,env:production}.as_rate() * 100 > 5"
+    query: "avg(last_5m):sum:trace.servlet.request.errors{service:alpha-orders,env:production}.as_rate() / sum:trace.servlet.request.hits{service:alpha-orders,env:production}.as_rate() * 100 > 5"
 
     monitor_thresholds:
       # Alert fires when error rate exceeds 5%
@@ -285,40 +285,40 @@ monitors:
     # {{threshold}} = the configured threshold (5%)
     message: |
       {{#is_alert}}
-      INS APM Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
-      Service: ins-splunk | Environment: production
+      Alpha Order Service Error Rate Alert — Error rate is {{value}}% (threshold: {{threshold}}%)
+      Service: alpha-orders | Environment: production
       {{/is_alert}}
       {{#is_warning}}
-      INS APM Error Rate Warning — Error rate is {{value}}%
+      Alpha Order Service Error Rate Warning — Error rate is {{value}}%
       {{/is_warning}}
       {{#is_recovery}}
-      INS APM error rate has recovered. Current rate: {{value}}%
+      Alpha Order Service error rate has recovered. Current rate: {{value}}%
       {{/is_recovery}}
-      @pagerduty-INS_P2 @slack-ins-alerts
+      @pagerduty-ALPHA_P2 @slack-alpha-alerts
 
     # Tags for filtering and grouping in Datadog UI
-    # "migrated-from:splunk" helps track which monitors came from the migration
+    # "migrated-from:legacy-apm" helps track which monitors came from the migration
     tags:
       - "env:production"
-      - "team:insurance"
-      - "service:ins-splunk"
-      - "migrated-from:splunk"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "migrated-from:legacy-apm"
 
 
   # ---------------------------------------------------------------------------
-  # MONITOR 2: INS APM Latency P99
+  # MONITOR 2: Alpha Order Service Latency P99
   # ---------------------------------------------------------------------------
-  # MIGRATED FROM SPLUNK APM DETECTOR:
-  #   Splunk: "Alert when P99 latency exceeds 2 seconds"
+  # MIGRATED FROM LEGACY APM DETECTOR:
+  #   Legacy: "Alert when P99 latency exceeds 2 seconds"
   #   Datadog: trace.servlet.request using p99 aggregation
   #
   # The warning threshold (1500ms) creates an early notification before the
   # critical threshold (2000ms) is breached — giving the team time to
   # investigate before it becomes a P1 incident.
   # ---------------------------------------------------------------------------
-  ins_splunk_apm_latency_monitor:
+  alpha_order_svc_latency_monitor:
 
-    name: "INS — APM Splunk Service Latency P99 High"
+    name: "Alpha — Order Service Latency P99 High"
 
     type: "metric alert"
 
@@ -326,7 +326,7 @@ monitors:
     #   avg(last_5m):  Average over the last 5 minutes
     #   p99:trace.servlet.request{...}  99th percentile response time
     #   > 2000  Alert when P99 exceeds 2000ms (2 seconds)
-    query: "avg(last_5m):p99:trace.servlet.request{service:ins-splunk,env:production} > 2000"
+    query: "avg(last_5m):p99:trace.servlet.request{service:alpha-orders,env:production} > 2000"
 
     monitor_thresholds:
       # Alert when P99 latency exceeds 2000ms (2 seconds)
@@ -344,42 +344,42 @@ monitors:
 
     message: |
       {{#is_alert}}
-      INS APM Latency Alert — P99 latency is {{value}}ms (threshold: {{threshold}}ms)
-      Service: ins-splunk | Environment: production
+      Alpha Order Service Latency Alert — P99 latency is {{value}}ms (threshold: {{threshold}}ms)
+      Service: alpha-orders | Environment: production
       Investigate: Check for slow database queries or downstream service issues
       {{/is_alert}}
       {{#is_warning}}
-      INS APM Latency Warning — P99 latency is {{value}}ms
+      Alpha Order Service Latency Warning — P99 latency is {{value}}ms
       {{/is_warning}}
       {{#is_recovery}}
-      INS APM latency has recovered. Current P99: {{value}}ms
+      Alpha Order Service latency has recovered. Current P99: {{value}}ms
       {{/is_recovery}}
-      @pagerduty-INS_P2
+      @pagerduty-ALPHA_P2
 
     tags:
       - "env:production"
-      - "team:insurance"
-      - "service:ins-splunk"
-      - "migrated-from:splunk"
+      - "team:alpha"
+      - "service:alpha-orders"
+      - "migrated-from:legacy-apm"
 
 
   # ---------------------------------------------------------------------------
-  # MONITOR 3: INS Payments API Availability
+  # MONITOR 3: Alpha Checkout API Availability
   # ---------------------------------------------------------------------------
-  # MIGRATED FROM SPLUNK APM DETECTOR:
-  #   This was a Splunk "service down" detector. In Datadog we use a service
+  # MIGRATED FROM LEGACY APM DETECTOR:
+  #   This was a legacy "service down" detector. In Datadog we use a service
   #   check monitor.
   #
   #   Priority 1 (P1) means CRITICAL — this wakes people up at 3am.
   #   The runbook link in the message means whoever gets paged has immediate
   #   access to the remediation steps.
   #
-  #   Payments being down is a revenue-impacting incident — that is why this
-  #   is the highest priority monitor in the insurance channel.
+  #   Checkout being down is a revenue-impacting incident — that is why this
+  #   is the highest priority monitor in the alpha channel.
   # ---------------------------------------------------------------------------
-  ins_payments_api_availability_monitor:
+  alpha_checkout_api_availability_monitor:
 
-    name: "INS — Payments API Availability"
+    name: "Alpha — Checkout API Availability"
 
     # "service check" = monitors whether a service is reporting as healthy
     # Different from "metric alert" — this watches the service status itself,
@@ -389,7 +389,7 @@ monitors:
     check: "datadog.agent.check_status"
 
     check_tags:
-      - "service:ins-payments"
+      - "service:alpha-checkout"
       - "env:production"
 
     monitor_thresholds:
@@ -407,17 +407,17 @@ monitors:
 
     message: |
       {{#is_alert}}
-      P1 — INS Payments API is DOWN
-      The payments service has stopped responding. Immediate action required.
-      Runbook: https://wiki.example.com/runbooks/payments-down
+      P1 — Alpha Checkout API is DOWN
+      The checkout service has stopped responding. Immediate action required.
+      Runbook: https://wiki.acme-demo.com/runbooks/checkout-down
       {{/is_alert}}
       {{#is_recovery}}
-      INS Payments API has recovered and is responding normally.
+      Alpha Checkout API has recovered and is responding normally.
       {{/is_recovery}}
-      @pagerduty-INS_P1 @slack-ins-oncall
+      @pagerduty-ALPHA_P1 @slack-alpha-oncall
 
     tags:
       - "env:production"
-      - "team:insurance"
-      - "service:ins-payments"
-      - "migrated-from:splunk"
+      - "team:alpha"
+      - "service:alpha-checkout"
+      - "migrated-from:legacy-apm"
